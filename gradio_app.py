@@ -114,6 +114,7 @@ def load_pipeline(model_path, do_unload: bool = True):
             if model:
                 del model
         del pipeline
+        pipeline = None
         torch.cuda.empty_cache()
         gc.collect()
     print(f"Loading model from {model_path}")
