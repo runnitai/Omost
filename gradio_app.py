@@ -223,9 +223,9 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     conversation = [{"role": "system", "content": omost_canvas.system_prompt}]
 
     for user, assistant in history:
-        if user is None or assistant is None:
-            continue
-        conversation.extend([{"role": "user", "content": user}, {"role": "assistant", "content": assistant}])
+        if isinstance(user, str) and isinstance(assistant, str):
+            if len(user) > 0 and len(assistant) > 0:
+                conversation.extend([{"role": "user", "content": user}, {"role": "assistant", "content": assistant}])
 
     conversation.append({"role": "user", "content": message})
     # Load the model if it is not loaded
