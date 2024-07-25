@@ -244,7 +244,7 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     # Load the model if it is not loaded
     if not llm_model:
         load_llm_model(llm_model_name, False)
-        llm_model = llm_model.to(torch.device('gpu'))
+        llm_model = llm_model.to(torch.device('cuda'))
 
     input_ids = llm_tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True).to(llm_model.device)
