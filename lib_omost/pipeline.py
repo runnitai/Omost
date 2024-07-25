@@ -174,8 +174,8 @@ class OmostCrossAttnProcessor:
 
 
 class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
-    def __init__(self, vae, text_encoder, tokenizer, text_encoder_2, tokenizer_2, unet, *args, **kwargs):
-        super().__init__(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, text_encoder_2=text_encoder_2, tokenizer_2=tokenizer_2, unet=unet, *args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.k_model = KModel(unet=self.unet)
 
         attn_procs = {}

@@ -122,7 +122,8 @@ def load_pipeline(model_path, do_unload: bool = False):
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16, variant="fp16")
+        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
+                                                                          variant="fp16")
         tokenizer = temp_pipeline.tokenizer
         tokenizer_2 = temp_pipeline.tokenizer_2
         text_encoder = temp_pipeline.text_encoder
@@ -135,7 +136,8 @@ def load_pipeline(model_path, do_unload: bool = False):
         tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer", torch_dtype=torch.float16)
         tokenizer_2 = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer_2", torch_dtype=torch.float16)
         text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=torch.float16)
-        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=torch.float16)
+        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2",
+                                                       torch_dtype=torch.float16)
         vae = AutoencoderKL.from_pretrained(model_path, subfolder="vae", torch_dtype=torch.float16)
         unet = UNet2DConditionModel.from_pretrained(model_path, subfolder="unet", torch_dtype=torch.float16)
 
@@ -154,12 +156,10 @@ def load_pipeline(model_path, do_unload: bool = False):
     loaded_pipeline = model_path
 
     # Move pipeline to GPU
-    #pipeline.to(memory_management.gpu)
+    # pipeline.to(memory_management.gpu)
 
     # if do_unload:
     #     memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
-
-
 
 
 def load_llm_model(model_name, do_unload: bool = True):
@@ -228,7 +228,6 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     # if pipeline:
     #     pipeline = pipeline.to(memory_management.cpu)
 
-
     if seed == -1:
         seed = random_seed()
     np.random.seed(int(seed))
@@ -245,7 +244,7 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     # Load the model if it is not loaded
     if not llm_model:
         load_llm_model(llm_model_name, False)
-        #llm_model = llm_model.to(torch.device('cuda'))
+        # llm_model = llm_model.to(torch.device('cuda'))
 
     input_ids = llm_tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True).to(llm_model.device)
