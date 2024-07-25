@@ -104,7 +104,33 @@ def list_models(llm: bool = False):
     return models, default_model
 
 
-def load_pipeline(model_path, do_unload: bool = False):
+def load_pipeline(model_path):
+    global pipeline, loaded_pipeline, unet, vae
+
+    if pipeline is not None and loaded_pipeline == model_path:
+        return
+
+    if pipeline:
+        del pipeline
+        pipeline = None
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    print(f"Loading model from {model_path}")
+
+    if model_path.endswith('.safetensors'):
+        pipeline = StableDiffusionXLOmostPipeline().from_single_file(model_path, torch_dtype=torch.float16,
+                                                                     variant="fp16")
+    else:
+        pipeline = StableDiffusionXLOmostPipeline.from_pretrained(model_path, torch_dtype=torch.float16)
+    unet = pipeline.unet
+    vae = pipeline.vae
+    unet.set_attn_processor(AttnProcessor2_0())
+    vae.set_attn_processor(AttnProcessor2_0())
+    loaded_pipeline = model_path
+
+
+def load_pipeline_old(model_path, do_unload: bool = False):
     global tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline, loaded_pipeline
 
     if pipeline is not None and loaded_pipeline == model_path:
@@ -312,7 +338,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
     use_initial_latent = False
     eps = 0.05
     # Load the model
-    load_pipeline(model_selection, False)
+    load_pipeline(model_selection)
     # if llm_model:
     #     llm_model = llm_model.to(torch.device('cpu'))
     if not isinstance(pipeline, StableDiffusionXLOmostPipeline):
