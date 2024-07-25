@@ -119,7 +119,7 @@ def load_pipeline(model_path):
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        pipeline = StableDiffusionXLOmostPipeline().from_single_file(model_path, torch_dtype=torch.float16,
+        pipeline = StableDiffusionXLOmostPipeline.from_single_file(model_path, torch_dtype=torch.float16,
                                                                      variant="fp16")
     else:
         pipeline = StableDiffusionXLOmostPipeline.from_pretrained(model_path, torch_dtype=torch.float16)
