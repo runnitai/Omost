@@ -124,6 +124,7 @@ def load_pipeline(model_path, do_unload: bool = False):
     if model_path.endswith('.safetensors'):
         temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
                                                                           variant="fp16")
+        temp_pipeline = temp_pipeline.to(memory_management.gpu)
         tokenizer = temp_pipeline.tokenizer
         tokenizer_2 = temp_pipeline.tokenizer_2
         text_encoder = temp_pipeline.text_encoder
