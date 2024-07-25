@@ -104,7 +104,7 @@ def list_models(llm: bool = False):
     return models, default_model
 
 
-def load_pipeline(model_path, do_unload: bool = True):
+def load_pipeline(model_path, do_unload: bool = False):
     global tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline, loaded_pipeline
     if pipeline is not None and loaded_pipeline == model_path:
         return
