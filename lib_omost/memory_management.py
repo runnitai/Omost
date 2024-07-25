@@ -46,7 +46,7 @@ def load_models_to_gpu(models):
     for m in models_to_load:
         with movable_bnb_model(m):
             # Using `to_empty` to avoid copying meta tensors directly to GPU
-            m.to_empty(gpu)
+            m.to(gpu)
         print('Load to GPU:', m.__class__.__name__)
 
     models_in_gpu = list(set(models_in_gpu + models))
