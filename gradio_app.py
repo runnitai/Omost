@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 import sys
 import tempfile
@@ -112,11 +113,14 @@ def load_pipeline(model_path, do_unload: bool = True):
         for model in models_to_delete:
             if model:
                 del model
+        del pipeline
         torch.cuda.empty_cache()
+        gc.collect()
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path)
+        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
+                                                                          variant="fp16")
 
         tokenizer = temp_pipeline.tokenizer
         tokenizer_2 = temp_pipeline.tokenizer_2
