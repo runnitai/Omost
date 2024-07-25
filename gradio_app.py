@@ -154,10 +154,10 @@ def load_pipeline(model_path, do_unload: bool = False):
     loaded_pipeline = model_path
 
     # Move pipeline to GPU
-    pipeline.to(memory_management.gpu)
+    #pipeline.to(memory_management.gpu)
 
-    if do_unload:
-        memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
+    # if do_unload:
+    #     memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
 
 
 
@@ -225,8 +225,8 @@ def random_seed():
 @torch.inference_mode()
 def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: float, max_new_tokens: int) -> str:
     global llm_model, llm_tokenizer, llm_model_name, pipeline
-    if pipeline:
-        pipeline = pipeline.to(memory_management.cpu)
+    # if pipeline:
+    #     pipeline = pipeline.to(memory_management.cpu)
 
 
     if seed == -1:
