@@ -106,23 +106,23 @@ def list_models(llm: bool = False):
 
 def load_pipeline(model_path, do_unload: bool = False):
     global tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline, loaded_pipeline
+
     if pipeline is not None and loaded_pipeline == model_path:
         return
+
     if pipeline:
         models_to_delete = [tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline]
         for model in models_to_delete:
             if model:
                 del model
-        del pipeline
         pipeline = None
         torch.cuda.empty_cache()
         gc.collect()
+
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
-                                                                          variant="fp16")
-
+        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16, variant="fp16")
         tokenizer = temp_pipeline.tokenizer
         tokenizer_2 = temp_pipeline.tokenizer_2
         text_encoder = temp_pipeline.text_encoder
@@ -135,8 +135,7 @@ def load_pipeline(model_path, do_unload: bool = False):
         tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer", torch_dtype=torch.float16)
         tokenizer_2 = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer_2", torch_dtype=torch.float16)
         text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=torch.float16)
-        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2",
-                                                       torch_dtype=torch.float16)
+        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=torch.float16)
         vae = AutoencoderKL.from_pretrained(model_path, subfolder="vae", torch_dtype=torch.float16)
         unet = UNet2DConditionModel.from_pretrained(model_path, subfolder="unet", torch_dtype=torch.float16)
 
@@ -153,8 +152,11 @@ def load_pipeline(model_path, do_unload: bool = False):
         scheduler=None,  # We completely give up diffusers sampling system and use A1111's method
     )
     loaded_pipeline = model_path
+
     if do_unload:
         memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
+
+
 
 
 def load_llm_model(model_name, do_unload: bool = True):
