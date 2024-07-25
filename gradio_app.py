@@ -183,8 +183,8 @@ def load_llm_model(model_name, do_unload: bool = True):
         token=HF_TOKEN
     )
     llm_model_name = model_name
-    if do_unload:
-        llm_model = llm_model.to(torch.device('cpu'))
+    # if do_unload:
+    #     llm_model = llm_model.to(torch.device('cpu'))
 
 
 @torch.inference_mode()
@@ -244,7 +244,7 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     # Load the model if it is not loaded
     if not llm_model:
         load_llm_model(llm_model_name, False)
-        llm_model = llm_model.to(torch.device('cuda'))
+        #llm_model = llm_model.to(torch.device('cuda'))
 
     input_ids = llm_tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True).to(llm_model.device)
@@ -312,8 +312,8 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
     eps = 0.05
     # Load the model
     load_pipeline(model_selection, False)
-    if llm_model:
-        llm_model = llm_model.to(torch.device('cpu'))
+    # if llm_model:
+    #     llm_model = llm_model.to(torch.device('cpu'))
     if not isinstance(pipeline, StableDiffusionXLOmostPipeline):
         raise ValueError("Pipeline is not StableDiffusionXLOmostPipeline")
 
