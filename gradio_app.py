@@ -122,7 +122,8 @@ def load_pipeline(model_path, do_unload: bool = False):
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16, variant="fp16")
+        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
+                                                                          variant="fp16")
         tokenizer = temp_pipeline.tokenizer
         tokenizer_2 = temp_pipeline.tokenizer_2
         text_encoder = temp_pipeline.text_encoder
@@ -135,7 +136,8 @@ def load_pipeline(model_path, do_unload: bool = False):
         tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer", torch_dtype=torch.float16)
         tokenizer_2 = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer_2", torch_dtype=torch.float16)
         text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=torch.float16)
-        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=torch.float16)
+        text_encoder_2 = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder_2",
+                                                       torch_dtype=torch.float16)
         vae = AutoencoderKL.from_pretrained(model_path, subfolder="vae", torch_dtype=torch.float16)
         unet = UNet2DConditionModel.from_pretrained(model_path, subfolder="unet", torch_dtype=torch.float16)
 
@@ -154,9 +156,9 @@ def load_pipeline(model_path, do_unload: bool = False):
     loaded_pipeline = model_path
 
     if do_unload:
-        memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
-
-
+        pipeline = pipeline.to(torch.device('cpu'))
+    else:
+        pipeline = pipeline.to(memory_management.gpu)
 
 
 def load_llm_model(model_name, do_unload: bool = True):
@@ -182,7 +184,7 @@ def load_llm_model(model_name, do_unload: bool = True):
     )
     llm_model_name = model_name
     if do_unload:
-        memory_management.unload_all_models(llm_model)
+        llm_model = llm_model.to(torch.device('cpu'))
 
 
 @torch.inference_mode()
@@ -221,7 +223,11 @@ def random_seed():
 
 @torch.inference_mode()
 def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: float, max_new_tokens: int) -> str:
-    global llm_model, llm_tokenizer, llm_model_name
+    global llm_model, llm_tokenizer, llm_model_name, pipeline
+    if pipeline:
+        pipeline = pipeline.to(memory_management.cpu)
+
+
     if seed == -1:
         seed = random_seed()
     np.random.seed(int(seed))
@@ -238,7 +244,7 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
     # Load the model if it is not loaded
     if not llm_model:
         load_llm_model(llm_model_name, False)
-    memory_management.load_models_to_gpu(llm_model)
+        llm_model = llm_model.to(torch.device('gpu'))
 
     input_ids = llm_tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True).to(llm_model.device)
@@ -301,10 +307,13 @@ def post_chat(history):
 @torch.inference_mode()
 def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_height,
                  highres_scale, steps, cfg, highres_steps, highres_denoise, negative_prompt, model_selection):
+    global pipeline, llm_model
     use_initial_latent = False
     eps = 0.05
     # Load the model
     load_pipeline(model_selection, False)
+    if llm_model:
+        llm_model = llm_model.to(torch.device('cpu'))
     if not isinstance(pipeline, StableDiffusionXLOmostPipeline):
         raise ValueError("Pipeline is not StableDiffusionXLOmostPipeline")
 
@@ -319,13 +328,13 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         seed = random_seed()
     rng = torch.Generator(device=memory_management.gpu).manual_seed(seed)
 
-    memory_management.load_models_to_gpu([text_encoder, text_encoder_2])
+    # memory_management.load_models_to_gpu([text_encoder, text_encoder_2])
 
     positive_cond, positive_pooler, negative_cond, negative_pooler = pipeline.all_conds_from_canvas(canvas_outputs,
                                                                                                     negative_prompt)
 
     if use_initial_latent:
-        memory_management.load_models_to_gpu([vae])
+        # memory_management.load_models_to_gpu([vae])
         initial_latent = torch.from_numpy(canvas_outputs['initial_latent'])[None].movedim(-1, 1) / 127.5 - 1.0
         initial_latent_blur = 40
         initial_latent = torch.nn.functional.avg_pool2d(
@@ -344,7 +353,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
     else:
         initial_latent = torch.zeros(size=(num_samples, 4, image_height // 8, image_width // 8), dtype=torch.float32)
 
-    memory_management.load_models_to_gpu([unet])
+    # memory_management.load_models_to_gpu([unet])
 
     initial_latent = initial_latent.to(dtype=unet.dtype, device=unet.device)
 
@@ -361,7 +370,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         guidance_scale=float(cfg),
     ).images
 
-    memory_management.load_models_to_gpu([vae])
+    # memory_management.load_models_to_gpu([vae])
     latents = latents.to(dtype=vae.dtype, device=vae.device) / vae.config.scaling_factor
     pixels = vae.decode(latents).sample
     B, C, H, W = pixels.shape
@@ -379,7 +388,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         pixels = numpy2pytorch(pixels).to(device=vae.device, dtype=vae.dtype)
         latents = vae.encode(pixels).latent_dist.mode() * vae.config.scaling_factor
 
-        memory_management.load_models_to_gpu([unet])
+        # memory_management.load_models_to_gpu([unet])
         latents = latents.to(device=unet.device, dtype=unet.dtype)
 
         latents = pipeline(
@@ -395,7 +404,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
             guidance_scale=float(cfg),
         ).images
 
-        memory_management.load_models_to_gpu([vae])
+        # memory_management.load_models_to_gpu([vae])
         latents = latents.to(dtype=vae.dtype, device=vae.device) / vae.config.scaling_factor
         pixels = vae.decode(latents).sample
         pixels = pytorch2numpy(pixels)
