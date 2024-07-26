@@ -124,7 +124,7 @@ def load_pipeline(model_path, lora):
 
     if pipeline is not None and loaded_pipeline == model_path:
         if selected_lora != lora:
-            if lora is not None:
+            if lora is not None and lora != "" and os.path.exists(lora):
                 pipeline.load_lora_weights(lora)
             else:
                 pipeline.unload_lora_weights()
