@@ -37,8 +37,11 @@ parser.add_argument("--sdxl_name", type=str, default='RunDiffusion/Juggernaut-X-
 parser.add_argument("--llm_name", type=str, default='lllyasviel/omost-llama-3-8b-4bits')
 parser.add_argument("--checkpoints_folder", type=str,
                     default=os.path.join(os.path.dirname(__file__), "models", "checkpoints"))
+parser.add_argument("--lora-folder", type=str, default=os.path.join(os.path.dirname(__file__), "models", "lora"))
 parser.add_argument("--llm_folder", type=str, default=os.path.join(os.path.dirname(__file__), "models", "llm"))
 parser.add_argument("--outputs_folder", type=str, default=os.path.join(os.path.dirname(__file__), "outputs"))
+# Add a --no-defaults flag to disable the default models
+parser.add_argument("--no-defaults", action='store_true')
 args = parser.parse_args()
 
 DEFAULT_CHECKPOINTS = {
@@ -46,6 +49,9 @@ DEFAULT_CHECKPOINTS = {
     'SG161222/RealVisXL_V4.0': 'RealVisXL_V4.0',
     'stabilityai/stable-diffusion-xl-base-1.0': 'stable-diffusion-xl-base-1.0'
 }
+
+if args.no_defaults:
+    DEFAULT_CHECKPOINTS = {}
 
 DEFAULT_LLMS = {
     'lllyasviel/omost-llama-3-8b-4bits': 'omost-llama-3-8b-4bits',
@@ -56,12 +62,6 @@ DEFAULT_LLMS = {
     'lllyasviel/omost-phi-3-mini-128k': 'omost-phi-3-mini-128k'
 }
 
-tokenizer = None
-tokenizer_2 = None
-text_encoder = None
-text_encoder_2 = None
-vae = None
-unet = None
 pipeline = None
 loaded_pipeline = None
 llm_model = None
@@ -71,15 +71,19 @@ llm_tokenizer = None
 os.makedirs(args.outputs_folder, exist_ok=True)
 
 
-def list_models(llm: bool = False):
-    if not llm:
-        folder_path = args.checkpoints_folder
-        default_model = args.sdxl_name
-        models = [(name, key) for key, name in DEFAULT_CHECKPOINTS.items()]
-    else:
+def list_models(llm: bool = False, lora: bool = False):
+    if llm:
         folder_path = args.llm_folder
         default_model = args.llm_name
         models = [(name, key) for key, name in DEFAULT_LLMS.items()]
+    elif lora:
+        folder_path = args.lora_folder
+        default_model = None
+        models = []
+    else:
+        folder_path = args.checkpoints_folder
+        default_model = args.sdxl_name
+        models = [(name, key) for key, name in DEFAULT_CHECKPOINTS.items()]
 
     if os.path.exists(folder_path):
         for root, dirs, files in os.walk(folder_path):
@@ -97,6 +101,8 @@ def list_models(llm: bool = False):
     if llm:
         if llm_model and llm_model_name and llm_model_name in [name for key, name in models]:
             default_model = llm_model_name
+    elif lora:
+        default_model = ""
     else:
         if pipeline and loaded_pipeline and loaded_pipeline in [name for key, name in models]:
             default_model = loaded_pipeline
@@ -105,13 +111,12 @@ def list_models(llm: bool = False):
 
 
 def load_pipeline(model_path):
-    global pipeline, loaded_pipeline, unet, vae
+    global pipeline, loaded_pipeline
 
     if pipeline is not None and loaded_pipeline == model_path:
         return
 
     if pipeline:
-        del pipeline
         pipeline = None
         torch.cuda.empty_cache()
         gc.collect()
@@ -119,46 +124,16 @@ def load_pipeline(model_path):
     print(f"Loading model from {model_path}")
 
     if model_path.endswith('.safetensors'):
-        pipeline = StableDiffusionXLOmostPipeline.from_single_file(model_path, torch_dtype=torch.float16,
+        pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
                                                                      variant="fp16")
-    else:
-        pipeline = StableDiffusionXLOmostPipeline.from_pretrained(model_path, torch_dtype=torch.float16)
-    unet = pipeline.unet
-    vae = pipeline.vae
-    unet.set_attn_processor(AttnProcessor2_0())
-    vae.set_attn_processor(AttnProcessor2_0())
-    loaded_pipeline = model_path
-
-
-def load_pipeline_old(model_path, do_unload: bool = False):
-    global tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline, loaded_pipeline
-
-    if pipeline is not None and loaded_pipeline == model_path:
-        return
-
-    if pipeline:
-        models_to_delete = [tokenizer, tokenizer_2, text_encoder, text_encoder_2, vae, unet, pipeline]
-        for model in models_to_delete:
-            if model:
-                del model
-        pipeline = None
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    print(f"Loading model from {model_path}")
-
-    if model_path.endswith('.safetensors'):
-        temp_pipeline = StableDiffusionXLImg2ImgPipeline.from_single_file(model_path, torch_dtype=torch.float16,
-                                                                          variant="fp16")
-        temp_pipeline = temp_pipeline.to(memory_management.gpu)
-        tokenizer = temp_pipeline.tokenizer
-        tokenizer_2 = temp_pipeline.tokenizer_2
-        text_encoder = temp_pipeline.text_encoder
-        text_encoder_2 = temp_pipeline.text_encoder_2
-        # Convert text_encoder_2 to ClipTextModel
+        pipeline = pipeline.to(memory_management.gpu)
+        tokenizer = pipeline.tokenizer
+        tokenizer_2 = pipeline.tokenizer_2
+        text_encoder = pipeline.text_encoder
+        text_encoder_2 = pipeline.text_encoder_2
         text_encoder_2 = CLIPTextModel(config=text_encoder_2.config)
-        vae = temp_pipeline.vae
-        unet = temp_pipeline.unet
+        vae = pipeline.vae
+        unet = pipeline.unet
     else:
         tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer", torch_dtype=torch.float16)
         tokenizer_2 = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer_2", torch_dtype=torch.float16)
@@ -180,13 +155,8 @@ def load_pipeline_old(model_path, do_unload: bool = False):
         unet=unet,
         scheduler=None,  # We completely give up diffusers sampling system and use A1111's method
     )
+    pipeline = pipeline.to(torch.device('cuda'))
     loaded_pipeline = model_path
-
-    # Move pipeline to GPU
-    # pipeline.to(memory_management.gpu)
-
-    # if do_unload:
-    #     memory_management.unload_all_models([text_encoder, text_encoder_2, vae, unet])
 
 
 def load_llm_model(model_name, do_unload: bool = True):
@@ -252,8 +222,6 @@ def random_seed():
 @torch.inference_mode()
 def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: float, max_new_tokens: int) -> str:
     global llm_model, llm_tokenizer, llm_model_name, pipeline
-    # if pipeline:
-    #     pipeline = pipeline.to(memory_management.cpu)
 
     if seed == -1:
         seed = random_seed()
@@ -268,10 +236,13 @@ def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: f
                 conversation.extend([{"role": "user", "content": user}, {"role": "assistant", "content": assistant}])
 
     conversation.append({"role": "user", "content": message})
+    if pipeline:
+        pipeline = pipeline.to(memory_management.cpu)
     # Load the model if it is not loaded
     if not llm_model:
         load_llm_model(llm_model_name, False)
-        # llm_model = llm_model.to(torch.device('cuda'))
+
+    memory_management.load_models_to_gpu([llm_model])
 
     input_ids = llm_tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True).to(llm_model.device)
@@ -334,16 +305,18 @@ def post_chat(history):
 @torch.inference_mode()
 def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_height,
                  highres_scale, steps, cfg, highres_steps, highres_denoise, negative_prompt, model_selection):
-    global pipeline, llm_model
+    global pipeline, llm_model, llm_tokenizer
+    memory_management.unload_all_models([llm_model])
     use_initial_latent = False
     eps = 0.05
     # Load the model
     load_pipeline(model_selection)
-    # if llm_model:
-    #     llm_model = llm_model.to(torch.device('cpu'))
     if not isinstance(pipeline, StableDiffusionXLOmostPipeline):
         raise ValueError("Pipeline is not StableDiffusionXLOmostPipeline")
-
+    vae = pipeline.vae
+    unet = pipeline.unet
+    text_encoder = pipeline.text_encoder
+    text_encoder_2 = pipeline.text_encoder_2
     if not isinstance(vae, AutoencoderKL):
         raise ValueError("VAE is not AutoencoderKL")
 
@@ -355,13 +328,12 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         seed = random_seed()
     rng = torch.Generator(device=memory_management.gpu).manual_seed(seed)
 
-    # memory_management.load_models_to_gpu([text_encoder, text_encoder_2])
+    memory_management.load_models_to_gpu([text_encoder, text_encoder_2])
 
-    positive_cond, positive_pooler, negative_cond, negative_pooler = pipeline.all_conds_from_canvas(canvas_outputs,
-                                                                                                    negative_prompt)
+    positive_cond, positive_pooler, negative_cond, negative_pooler = pipeline.all_conds_from_canvas(canvas_outputs, negative_prompt)
 
     if use_initial_latent:
-        # memory_management.load_models_to_gpu([vae])
+        memory_management.load_models_to_gpu([vae])
         initial_latent = torch.from_numpy(canvas_outputs['initial_latent'])[None].movedim(-1, 1) / 127.5 - 1.0
         initial_latent_blur = 40
         initial_latent = torch.nn.functional.avg_pool2d(
@@ -380,10 +352,10 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
     else:
         initial_latent = torch.zeros(size=(num_samples, 4, image_height // 8, image_width // 8), dtype=torch.float32)
 
-    # memory_management.load_models_to_gpu([unet])
+    memory_management.load_models_to_gpu([unet])
 
     initial_latent = initial_latent.to(dtype=unet.dtype, device=unet.device)
-
+    print("Starting diffusion")
     latents = pipeline(
         initial_latent=initial_latent,
         strength=1.0,
@@ -397,12 +369,12 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         guidance_scale=float(cfg),
     ).images
 
-    # memory_management.load_models_to_gpu([vae])
+    memory_management.load_models_to_gpu([vae])
     latents = latents.to(dtype=vae.dtype, device=vae.device) / vae.config.scaling_factor
     pixels = vae.decode(latents).sample
     B, C, H, W = pixels.shape
     pixels = pytorch2numpy(pixels)
-
+    print("Diffusion done, doing hires")
     if highres_scale > 1.0 + eps:
         pixels = [
             resize_without_crop(
@@ -415,7 +387,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         pixels = numpy2pytorch(pixels).to(device=vae.device, dtype=vae.dtype)
         latents = vae.encode(pixels).latent_dist.mode() * vae.config.scaling_factor
 
-        # memory_management.load_models_to_gpu([unet])
+        memory_management.load_models_to_gpu([unet])
         latents = latents.to(device=unet.device, dtype=unet.dtype)
 
         latents = pipeline(
@@ -431,7 +403,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
             guidance_scale=float(cfg),
         ).images
 
-        # memory_management.load_models_to_gpu([vae])
+        memory_management.load_models_to_gpu([vae])
         latents = latents.to(dtype=vae.dtype, device=vae.device) / vae.config.scaling_factor
         pixels = vae.decode(latents).sample
         pixels = pytorch2numpy(pixels)
@@ -518,17 +490,18 @@ with gr.Blocks(
             with gr.Accordion(open=True, label='Image Diffusion Model'):
                 with gr.Group():
                     with gr.Row():
-                        image_width = gr.Slider(label="Image Width", minimum=256, maximum=2048, value=896, step=64)
-                        image_height = gr.Slider(label="Image Height", minimum=256, maximum=2048, value=1152, step=64)
+                        image_width = gr.Slider(label="Image Width", minimum=256, maximum=2048, value=1920, step=64)
+                        image_height = gr.Slider(label="Image Height", minimum=256, maximum=2048, value=1080, step=64)
 
                     with gr.Row():
+                        with gr.Column():
+                            checkpoint_list, selected = list_models(False)
+                            model_select = gr.Dropdown(label="Select Model", choices=checkpoint_list, interactive=True,
+                                                       value=selected)
+                            model_refresh_btn = gr.Button("Refresh Model List", variant="secondary", size="sm",
+                                                          min_width=60)
                         num_samples = gr.Slider(label="Image Number", minimum=1, maximum=12, value=1, step=1)
                         steps = gr.Slider(label="Sampling Steps", minimum=1, maximum=100, value=25, step=1)
-                    checkpoint_list, selected = list_models(False)
-
-                    model_select = gr.Dropdown(label="Select Model", choices=checkpoint_list, interactive=True,
-                                               value=selected)
-                    model_refresh_btn = gr.Button("Refresh Model List", variant="secondary", size="sm", min_width=60)
 
             with gr.Accordion(open=False, label='Advanced'):
                 cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=5.0, step=0.01)
@@ -544,6 +517,7 @@ with gr.Blocks(
             examples = gr.Dataset(
                 samples=[
                     ['Generate an image of several squirrels in business suits having a meeting in a park'],
+                    ['Generate a photo of three goats sitting around a table playing poker.'],
                     ['Add a dog in the background']
                 ],
                 components=[gr.Textbox(visible=False)],
@@ -586,12 +560,6 @@ with gr.Blocks(
         fn=update_llm_list,
         inputs=[],
         outputs=[llm_select]
-    )
-
-    model_select.change(
-        fn=load_pipeline,
-        inputs=[model_select],
-        outputs=[]
     )
 
     llm_select.change(

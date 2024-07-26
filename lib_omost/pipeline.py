@@ -5,7 +5,6 @@ from tqdm.auto import trange
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import *
 from diffusers.models.transformers import Transformer2DModel
 
-
 original_Transformer2DModel_forward = Transformer2DModel.forward
 
 
@@ -62,7 +61,6 @@ class KModel:
         betas = torch.linspace(linear_start ** 0.5, linear_end ** 0.5, timesteps, dtype=torch.float64) ** 2
         alphas = 1. - betas
         alphas_cumprod = torch.tensor(np.cumprod(alphas, axis=0), dtype=torch.float32)
-
         self.sigmas = ((1 - alphas_cumprod) / alphas_cumprod) ** 0.5
         self.log_sigmas = self.sigmas.log()
         self.sigma_data = 1.0
@@ -134,7 +132,8 @@ class OmostCrossAttnProcessor:
         masks = []
 
         for m, c in encoder_hidden_states:
-            m = torch.nn.functional.interpolate(m[None, None, :, :], (H, W), mode='nearest-exact').flatten().unsqueeze(1).repeat(1, c.size(1))
+            m = torch.nn.functional.interpolate(m[None, None, :, :], (H, W), mode='nearest-exact').flatten().unsqueeze(
+                1).repeat(1, c.size(1))
             conds.append(c)
             masks.append(m)
 
@@ -174,9 +173,35 @@ class OmostCrossAttnProcessor:
 
 
 class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self,
+                 vae: AutoencoderKL,
+                 text_encoder: CLIPTextModel,
+                 text_encoder_2: CLIPTextModelWithProjection,
+                 tokenizer: CLIPTokenizer,
+                 tokenizer_2: CLIPTokenizer,
+                 unet: UNet2DConditionModel,
+                 scheduler: Union[KarrasDiffusionSchedulers, None],
+                 image_encoder: CLIPVisionModelWithProjection = None,
+                 feature_extractor: CLIPImageProcessor = None,
+                 requires_aesthetics_score: bool = False,
+                 force_zeros_for_empty_prompt: bool = True,
+                 add_watermarker: Optional[bool] = None, ):
+
+        super().__init__(vae, text_encoder, text_encoder_2, tokenizer, tokenizer_2, unet, scheduler, image_encoder,
+                         feature_extractor, requires_aesthetics_score, force_zeros_for_empty_prompt, add_watermarker)
+        # Create new text_encoder_2 from the config of the provided text_encoder_2
         self.k_model = KModel(unet=self.unet)
+
+        self.loading_components = dict(
+            vae=vae,
+            text_encoder=text_encoder,
+            text_encoder_2=text_encoder_2,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            unet=unet,
+            image_encoder=image_encoder,
+            feature_extractor=feature_extractor,
+        )
 
         attn_procs = {}
         for name in self.unet.attn_processors.keys():
@@ -187,6 +212,14 @@ class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
 
         self.unet.set_attn_processor(attn_procs)
         return
+
+    def to(self, *args, **kwargs):
+        # Remove silence_dtype_warnings from kwargs if present
+        kwargs.pop('silence_dtype_warnings', None)
+        for k, v in self.loading_components.items():
+            if hasattr(v, 'to'):
+                v.to(*args, **kwargs)
+        return self
 
     @torch.inference_mode()
     def encode_bag_of_subprompts_greedy(self, prefixes: list[str], suffixes: list[str]):
@@ -217,7 +250,8 @@ class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
         @torch.inference_mode()
         def get_77_tokens_in_torch(subprompt_inds, tokenizer):
             # Note that all subprompt are theoretically less than 75 tokens (without bos/eos)
-            result = [tokenizer.bos_token_id] + subprompt_inds[:75] + [tokenizer.eos_token_id] + [tokenizer.pad_token_id] * 75
+            result = [tokenizer.bos_token_id] + subprompt_inds[:75] + [tokenizer.eos_token_id] + [
+                tokenizer.pad_token_id] * 75
             result = result[:77]
             result = torch.tensor([result]).to(device=device, dtype=torch.int64)
             return result
@@ -338,7 +372,6 @@ class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
 
         pooled_prompt_embeds = None
         prompt_embeds_list = []
-
         for tokenizer, text_encoder in zip(tokenizers, text_encoders):
             text_input_ids = tokenizer(
                 prompt,
@@ -408,7 +441,8 @@ class StableDiffusionXLOmostPipeline(StableDiffusionXLImg2ImgPipeline):
         add_time_ids = add_time_ids.repeat(batch_size, 1).to(device)
         add_neg_time_ids = add_neg_time_ids.repeat(batch_size, 1).to(device)
         prompt_embeds = [(k.to(device), v.repeat(batch_size, 1, 1).to(noise)) for k, v in prompt_embeds]
-        negative_prompt_embeds = [(k.to(device), v.repeat(batch_size, 1, 1).to(noise)) for k, v in negative_prompt_embeds]
+        negative_prompt_embeds = [(k.to(device), v.repeat(batch_size, 1, 1).to(noise)) for k, v in
+                                  negative_prompt_embeds]
         pooled_prompt_embeds = pooled_prompt_embeds.repeat(batch_size, 1).to(noise)
         negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(batch_size, 1).to(noise)
 
