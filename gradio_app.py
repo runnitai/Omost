@@ -1,5 +1,6 @@
 import argparse
 import gc
+import json
 import os
 import sys
 import tempfile
@@ -41,7 +42,7 @@ parser.add_argument("--lora-folder", type=str, default=os.path.join(os.path.dirn
 parser.add_argument("--llm_folder", type=str, default=os.path.join(os.path.dirname(__file__), "models", "llm"))
 parser.add_argument("--outputs_folder", type=str, default=os.path.join(os.path.dirname(__file__), "outputs"))
 # Add a --no-defaults flag to disable the default models
-parser.add_argument("--no-defaults", action='store_true')
+parser.add_argument("--no_defaults", action='store_true')
 args = parser.parse_args()
 
 DEFAULT_CHECKPOINTS = {
@@ -64,6 +65,7 @@ DEFAULT_LLMS = {
 
 pipeline = None
 loaded_pipeline = None
+selected_lora = None
 llm_model = None
 llm_model_name = None
 llm_tokenizer = None
@@ -75,16 +77,16 @@ def list_models(llm: bool = False, lora: bool = False):
     if llm:
         folder_path = args.llm_folder
         default_model = args.llm_name
-        models = [(name, key) for key, name in DEFAULT_LLMS.items()]
+        default_models = [(name, key) for key, name in DEFAULT_LLMS.items()]
     elif lora:
         folder_path = args.lora_folder
         default_model = None
-        models = []
+        default_models = []
     else:
         folder_path = args.checkpoints_folder
         default_model = args.sdxl_name
-        models = [(name, key) for key, name in DEFAULT_CHECKPOINTS.items()]
-
+        default_models = [(name, key) for key, name in DEFAULT_CHECKPOINTS.items()]
+    models = []
     if os.path.exists(folder_path):
         for root, dirs, files in os.walk(folder_path):
             # If we want to list only files with a specific extension
@@ -106,14 +108,26 @@ def list_models(llm: bool = False, lora: bool = False):
     else:
         if pipeline and loaded_pipeline and loaded_pipeline in [name for key, name in models]:
             default_model = loaded_pipeline
-
+    # Sort default_models alphabetically
+    default_models = sorted(default_models, key=lambda x: x[0])
+    models = sorted(models, key=lambda x: x[0])
+    if default_models:
+        models = default_models + models
+    if lora:
+        # Inject "" as the first entry
+        models = [""] + models
     return models, default_model
 
 
-def load_pipeline(model_path):
-    global pipeline, loaded_pipeline
+def load_pipeline(model_path, lora):
+    global pipeline, loaded_pipeline, selected_lora
 
     if pipeline is not None and loaded_pipeline == model_path:
+        if selected_lora != lora:
+            if lora is not None:
+                pipeline.load_lora_weights(lora)
+            else:
+                pipeline.unload_lora_weights()
         return
 
     if pipeline:
@@ -155,6 +169,12 @@ def load_pipeline(model_path):
         unet=unet,
         scheduler=None,  # We completely give up diffusers sampling system and use A1111's method
     )
+    if lora is not None:
+        print(f"Loading Lora from {lora}")
+        pipeline.load_lora_weights(lora)
+    else:
+        pipeline.unload_lora_weights()
+
     pipeline = pipeline.to(torch.device('cuda'))
     loaded_pipeline = model_path
 
@@ -220,7 +240,7 @@ def random_seed():
 
 
 @torch.inference_mode()
-def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: float, max_new_tokens: int) -> str:
+def chat_fn(message: str, history: list, seed: int, temperature: float, top_p: float, max_new_tokens: int, lora: str) -> str:
     global llm_model, llm_tokenizer, llm_model_name, pipeline
 
     if seed == -1:
@@ -304,13 +324,24 @@ def post_chat(history):
 
 @torch.inference_mode()
 def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_height,
-                 highres_scale, steps, cfg, highres_steps, highres_denoise, negative_prompt, model_selection):
+                 highres_scale, steps, cfg, highres_steps, highres_denoise, negative_prompt, model_selection,
+                 lora_selection, lora_scale):
     global pipeline, llm_model, llm_tokenizer
+
+    lora_info_dict = {}
+    if lora_selection != "" and os.path.exists(lora_selection):
+        lora_json = lora_selection.replace(".safetensors", ".json")
+        if os.path.exists(lora_json):
+            with open(lora_json, "r") as f:
+                lora_info_dict = json.load(f)
+
+    activation_text = lora_info_dict.get("activation text", None)
+
     memory_management.unload_all_models([llm_model])
     use_initial_latent = False
     eps = 0.05
     # Load the model
-    load_pipeline(model_selection)
+    load_pipeline(model_selection, lora_selection)
     if not isinstance(pipeline, StableDiffusionXLOmostPipeline):
         raise ValueError("Pipeline is not StableDiffusionXLOmostPipeline")
     vae = pipeline.vae
@@ -330,7 +361,10 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
 
     memory_management.load_models_to_gpu([text_encoder, text_encoder_2])
 
-    positive_cond, positive_pooler, negative_cond, negative_pooler = pipeline.all_conds_from_canvas(canvas_outputs, negative_prompt)
+    positive_cond, positive_pooler, negative_cond, negative_pooler = pipeline.all_conds_from_canvas(canvas_outputs,
+                                                                                                    negative_prompt,
+                                                                                                    lora_scale,
+                                                                                                    activation_text)
 
     if use_initial_latent:
         memory_management.load_models_to_gpu([vae])
@@ -366,6 +400,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         pooled_prompt_embeds=positive_pooler,
         negative_pooled_prompt_embeds=negative_pooler,
         generator=rng,
+        cross_attention_kwargs={"scale": lora_scale},
         guidance_scale=float(cfg),
     ).images
 
@@ -399,6 +434,7 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
             negative_prompt_embeds=negative_cond,
             pooled_prompt_embeds=positive_pooler,
             negative_pooled_prompt_embeds=negative_pooler,
+            cross_attention_kwargs={"scale": lora_scale},
             generator=rng,
             guidance_scale=float(cfg),
         ).images
@@ -420,6 +456,15 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
 
 def update_model_list():
     model_list, default_model = list_models(False)
+    if loaded_pipeline and loaded_pipeline in [path for name, path in model_list]:
+        default_model = loaded_pipeline
+    options = [(model, path) for model, path in model_list]
+    paths = {model: path for model, path in model_list}
+    return gr.update(choices=options, value=default_model if options else ""), paths
+
+
+def update_lora_list():
+    model_list, default_model = list_models(lora=True)
     if loaded_pipeline and loaded_pipeline in [path for name, path in model_list]:
         default_model = loaded_pipeline
     options = [(model, path) for model, path in model_list]
@@ -511,6 +556,13 @@ with gr.Blocks(
                 highres_denoise = gr.Slider(label="Highres Fix Denoise", minimum=0.1, maximum=1.0, value=0.4, step=0.01)
                 n_prompt = gr.Textbox(label="Negative Prompt",
                                       value='lowres, bad anatomy, bad hands, cropped, worst quality')
+                with gr.Column():
+                    lora_list, lora_selected = list_models(lora=True)
+                    lora_weight = gr.Slider(label="Lora Weight", minimum=0.0, maximum=1.0, value=0.5, step=0.01)
+                    lora_select = gr.Dropdown(label="Select Lora (Experimental)", choices=lora_list, interactive=True,
+                                              value=lora_selected)
+                    lora_refresh_btn = gr.Button("Refresh Model List", variant="secondary", size="sm",
+                                                 min_width=60)
 
             render_button = gr.Button("Render the Image!", size='lg', variant="primary", visible=False)
 
@@ -536,7 +588,7 @@ with gr.Blocks(
                 retry_btn=retry_btn,
                 undo_btn=undo_btn,
                 clear_btn=clear_btn,
-                additional_inputs=[seed, temperature, top_p, max_new_tokens],
+                additional_inputs=[seed, temperature, top_p, max_new_tokens, lora_select],
                 examples=examples
             )
 
@@ -544,7 +596,7 @@ with gr.Blocks(
         fn=diffusion_fn, inputs=[
             chatInterface.chatbot, canvas_state,
             num_samples, seed, image_width, image_height, highres_scale,
-            steps, cfg, highres_steps, highres_denoise, n_prompt, model_select
+            steps, cfg, highres_steps, highres_denoise, n_prompt, model_select, lora_select, lora_weight
         ], outputs=[chatInterface.chatbot]).then(
         fn=lambda x: x, inputs=[
             chatInterface.chatbot
@@ -554,6 +606,12 @@ with gr.Blocks(
         fn=update_model_list,
         inputs=[],
         outputs=[model_select]
+    )
+
+    lora_refresh_btn.click(
+        fn=update_lora_list,
+        inputs=[],
+        outputs=[lora_select]
     )
 
     llm_refresh_btn.click(
