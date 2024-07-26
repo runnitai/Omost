@@ -125,7 +125,10 @@ def load_pipeline(model_path, lora):
     if pipeline is not None and loaded_pipeline == model_path:
         if selected_lora != lora:
             if lora is not None and lora != "" and os.path.exists(lora):
+                if selected_lora != "" and selected_lora is not None:
+                    pipeline.unload_lora_weights()
                 pipeline.load_lora_weights(lora)
+                selected_lora = lora
             else:
                 pipeline.unload_lora_weights()
         return
@@ -169,9 +172,12 @@ def load_pipeline(model_path, lora):
         unet=unet,
         scheduler=None,  # We completely give up diffusers sampling system and use A1111's method
     )
-    if lora is not None:
+    if lora is not None and lora != "" and os.path.exists(lora):
         print(f"Loading Lora from {lora}")
+        if selected_lora != "" and selected_lora is not None:
+            pipeline.unload_lora_weights()
         pipeline.load_lora_weights(lora)
+        selected_lora = lora
     else:
         pipeline.unload_lora_weights()
 
