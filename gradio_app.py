@@ -340,6 +340,8 @@ def diffusion_fn(chatbot, canvas_outputs, num_samples, seed, image_width, image_
         if os.path.exists(lora_json):
             with open(lora_json, "r") as f:
                 lora_info_dict = json.load(f)
+    else:
+        lora_scale = 0
 
     activation_text = lora_info_dict.get("activation text", None)
 
